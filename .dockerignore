@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# Docker
+docker-compose-linux.yml
+Dockerfile*
+.dockerignore
+
+# Python
+__pycache__/
+.venv/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# 测试和临时文件
+cfg/
+misc/
+test/
+
+# 文档
+*.md

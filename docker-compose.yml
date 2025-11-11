@@ -1,0 +1,29 @@
+name: recycle-bin
+
+services:
+  inference-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inference-server
+    ports:
+      - "8000:8000"
+    volumes:
+      # 挂载模型文件（可选，如果需要动态更新模型）
+#      - ./model:/app/model
+      # 挂载 ROI 配置
+      - ./src/roi_config.json:/app/src/roi_config.json
+      # Windows 11
+      - /usr/lib/wsl:/usr/lib/wsl
+    restart: unless-stopped
+    devices:
+      # Linux
+#      - /dev/dri:/dev/dri
+      # Windows 11
+      - /dev/dxg
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

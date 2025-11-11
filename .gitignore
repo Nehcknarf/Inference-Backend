@@ -1,0 +1,7 @@
+.vscode
+.idea
+.claude
+.venv
+model/model_cache
+__pycache__
+*.egg-info
