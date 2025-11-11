@@ -18,7 +18,7 @@ os.add_dll_directory("C:/Program Files/gstreamer/1.0/msvc_x86_64/bin")
 import cv2
 import json
 from pathlib import Path
-from ipc import ThreadedVideoCapture
+from stream import ThreadedVideoCapture
 
 # ROI配置文件路径
 ROI_CONFIG_FILE = "roi_config.json"

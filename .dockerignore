@@ -18,7 +18,7 @@ __pycache__/
 .claude/
 
 # 测试和临时文件
-cfg/
+ipc_cfg/
 misc/
 test/
 

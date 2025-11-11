@@ -1,0 +1,29 @@
+[stream]
+
+[stream.1]
+url = "rtsp://admin:@192.168.0.10:554"
+roi_x = 501
+roi_y = 30
+roi_width = 895
+roi_height = 920
+
+[stream.2]
+url = "rtsp://admin:@192.168.0.11:554"
+roi_x = 536
+roi_y = 81
+roi_width = 903
+roi_height = 920
+
+[infer]
+confidence_threshold = 0.5
+nms_threshold = 0.4
+class_names = [
+    "保留",
+    "ASLAT",
+    "RFTN",
+    "FTN",
+    "SFTN",
+    "MF",
+    "MHJ",
+    "PTD"
+]

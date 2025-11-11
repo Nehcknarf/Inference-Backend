@@ -31,15 +31,15 @@ class ThreadedVideoCapture:
             "decodebin ! videoconvert ! "
             f"appsink drop=true sync=false"
         )
+
         # pipeline = (
         #     "mfvideosrc ! "
         #     "videoconvert ! appsink drop=true sync=false"
         # )
-        self._cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
 
+        self._cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         if not self._cap.isOpened():
             print(f"无法打开视频流: {self.source_url}")
-            self._cap = None
         else:
             print(f"视频流连接成功: {self.source_url}")
 
@@ -47,7 +47,7 @@ class ThreadedVideoCapture:
         """启动后台读取线程。"""
         if self._is_running:
             print(f"线程已经为 {self.source_url} 启动，请勿重复启动。")
-            return self
+            return
 
         self._is_running = True
         self._thread = threading.Thread(
@@ -57,7 +57,6 @@ class ThreadedVideoCapture:
         )
         self._thread.start()
         print(f"[{self.source_url}] 视频流读取线程已启动。")
-        return self
 
     def _update_loop(self):
         """
@@ -65,7 +64,7 @@ class ThreadedVideoCapture:
         """
         reconnect_delay = 1
         while self._is_running:
-            if self._cap and self._cap.isOpened():
+            if self._cap.isOpened():
                 ret, frame = self._cap.read()
                 if ret:
                     # 读取成功，重置重连延迟
@@ -81,19 +80,16 @@ class ThreadedVideoCapture:
                     # 帧读取失败，可能连接已断开
                     print(f"从 {self.source_url} 读取帧失败，可能连接已断开。")
                     self._cap.release()
-                    self._cap = None
                     # 短暂休眠，避免CPU空转
                     time.sleep(0.01)
             else:
                 # 连接丢失，尝试重连
                 print(f"流连接丢失，正在尝试重新连接: {self.source_url}")
-                if self._cap:
-                    self._cap.release()
-                    self._cap = None
+                self._cap.release()
 
                 # 带指数退避的重连逻辑
                 self._connect()
-                if self._cap is None:
+                if not self._cap.isOpened():
                     print(f"重连失败，将在 {reconnect_delay} 秒后重试...")
                     time.sleep(reconnect_delay)
                     reconnect_delay = min(reconnect_delay * 2, 30)  # 指数退避，最长30秒
@@ -131,18 +127,7 @@ class ThreadedVideoCapture:
         self._cap = None
         print(f"视频读取线程 [{self.source_url}] 已停止。")
 
-    def isOpened(self):
-        """检查视频捕获是否已打开。"""
-        return self._cap is not None and self._cap.isOpened()
-
 
 if __name__ == "__main__":
     camera = ThreadedVideoCapture("rtsp://admin:@192.168.0.10:554")
     camera.start()
-    cv2.namedWindow("Frame", cv2.WINDOW_NORMAL)
-    while True:
-        ret, frame = camera.read()
-        if not ret:
-            break
-        cv2.imshow("Frame", frame)
-        cv2.waitKey(1)

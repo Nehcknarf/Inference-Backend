@@ -15,7 +15,7 @@ class QuadrantStats(BaseModel):
 class StreamResult(BaseModel):
     """单路流的检测结果"""
 
-    detections: List[dict]
+    # detections: List[dict]
     quadrant_stats: QuadrantStats
 
 
