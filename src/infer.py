@@ -134,7 +134,7 @@ class AsyncYoloInference:
             )
         except Exception as e:
             print(f"NMSBoxesRotated 发生错误: {e}")
-            indices = range(len(boxes_for_nms))
+            indices = []
 
         results = []
         if len(indices) > 0:

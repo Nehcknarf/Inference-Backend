@@ -54,8 +54,8 @@ async def predict_dual_stream(request: Request):
     rtsp_readers = request.app.state.rtsp_readers
 
     # 1. 从两路流获取最新帧
-    ret1, frame1 = rtsp_readers[0].read(timeout=10)
-    ret2, frame2 = rtsp_readers[1].read(timeout=10)
+    ret1, frame1 = rtsp_readers[0].read(timeout=2)
+    ret2, frame2 = rtsp_readers[1].read(timeout=2)
 
     if not ret1 or frame1 is None:
         raise HTTPException(status_code=503, detail="无法从第一路RTSP流读取帧。")

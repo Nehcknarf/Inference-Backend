@@ -3,12 +3,13 @@
 .gitignore
 
 # Docker
-docker-compose-linux.yml
-Dockerfile*
+docker-compose*.yml
+*Dockerfile
 .dockerignore
 
 # Python
 __pycache__/
+*.egg-info
 .venv/
 .ruff_cache/
 
