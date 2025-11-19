@@ -6,8 +6,11 @@ dependencies = [
     "openvino",
     "cryptography",
     "fastapi[standard]",
-    "opencv-python-headless @ file:///app/wheel/opencv_python_headless-4.12.0.88-cp313-cp313-linux_x86_64.whl"
+    "opencv-python-headless"
 ]
+
+[tool.uv.sources]
+opencv-python-headless = { path = "./wheel/opencv_python_headless-4.12.0.88-cp313-cp313-linux_x86_64.whl" }
 
 [build-system]
 requires = ["setuptools"]
