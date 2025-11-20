@@ -18,12 +18,12 @@ roi_height = 920
 confidence_threshold = 0.5
 nms_threshold = 0.4
 class_names = [
-    "保留",
-    "ASLAT",
-    "RFTN",
-    "FTN",
-    "SFTN",
-    "MF",
-    "MHJ",
-    "PTD"
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7"
 ]

@@ -6,10 +6,10 @@ from pydantic import BaseModel
 class QuadrantStats(BaseModel):
     """四象限统计结果"""
 
-    q1: Dict[int, int]
-    q2: Dict[int, int]
-    q3: Dict[int, int]
-    q4: Dict[int, int]
+    q1: Dict[str, int]
+    q2: Dict[str, int]
+    q3: Dict[str, int]
+    q4: Dict[str, int]
 
 
 class StreamResult(BaseModel):

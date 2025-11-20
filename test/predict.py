@@ -1,7 +1,3 @@
-import os
-
-os.add_dll_directory("C:/Program Files/gstreamer/1.0/msvc_x86_64/bin")
-
 import httpx
 import cv2
 import numpy as np
