@@ -1,16 +1,24 @@
 import math
 import asyncio
-from pathlib import Path
 from collections import defaultdict
 
 import cv2
 import numpy as np
 import openvino as ov
 import openvino.properties.hint as hints
-# from openvino import Core
-# print(Core().available_devices)
 
-from config import confidence_threshold, nms_threshold, class_names, num_streams
+from config import (
+    confidence_threshold,
+    nms_threshold,
+    class_names,
+    num_streams,
+    model_dir,
+)
+
+
+def get_available_devices():
+    core = ov.Core()
+    return core.available_devices
 
 
 class AsyncYoloInference:
@@ -18,7 +26,7 @@ class AsyncYoloInference:
 
     def __init__(
         self,
-        model_path="model/best.xml",
+        model_path=model_dir / "best.xml",
         device="AUTO",
         num_streams=num_streams,
         requests_per_stream=2,
@@ -40,7 +48,7 @@ class AsyncYoloInference:
         core = ov.Core()
         ov_model = core.read_model(model_path)
 
-        cache_path = Path("model/model_cache")
+        cache_path = model_dir / "model_cache"
         cache_path.mkdir(exist_ok=True)
         config_dict = {
             "CACHE_DIR": str(cache_path),
@@ -62,21 +70,13 @@ class AsyncYoloInference:
             f"✓ 已创建 {num_streams} 个独立推理队列，每个队列支持 {requests_per_stream} 个并发请求"
         )
 
-    def preprocess(self, image, roi):
+    def preprocess(self, image):
         """图像预处理 - 保持宽高比的缩放和填充"""
-        original_height, original_width = image.shape[:2]
-        roi_x, roi_y, roi_width, roi_height = roi
-        # ROI 边界检查
-        x = max(0, min(roi_x, original_width - 1))
-        y = max(0, min(roi_y, original_height - 1))
-        w = min(roi_width, original_width - roi_x)
-        h = min(roi_height, original_height - roi_y)
-        crop_image = image[y : y + h, x : x + w]
-        crop_height, crop_width = crop_image.shape[:2]
-        ratio = min(self.W / crop_width, self.H / crop_height)
+        height, width = image.shape[:2]
+        ratio = min(self.W / width, self.H / height)
         new_unpad_w, new_unpad_h = (
-            int(crop_width * ratio),
-            int(crop_height * ratio),
+            int(width * ratio),
+            int(height * ratio),
         )
 
         resized_image = cv2.resize(
@@ -178,7 +178,7 @@ class AsyncYoloInference:
                 f"stream_id {stream_id} 超出范围，当前支持 {self.num_streams} 个流"
             )
 
-        preprocessed_image, scale_ratio = self.preprocess(image, roi)
+        preprocessed_image, scale_ratio = self.preprocess(image)
 
         # 使用指定流的推理队列（每个流独立，无需加锁）
         infer_queue = self.infer_queues[stream_id]
@@ -193,7 +193,7 @@ class AsyncYoloInference:
             """推理完成后的回调函数（在OpenVINO后台线程中执行）"""
             fut, s_ratio, event_loop = user_data
             output_tensor = infer_request.get_output_tensor(0).data[0]
-            detections = self.postprocess(output_tensor, s_ratio)
+            detections = self.postprocess(output_tensor, s_ratio, roi)
 
             # 使用保存的事件循环引用，从后台线程安全地设置结果
             event_loop.call_soon_threadsafe(fut.set_result, detections)
@@ -222,14 +222,29 @@ class AsyncYoloInference:
             color = self.colors[res["class_id"]].tolist()
             cv2.drawContours(image, [points], 0, color=color, thickness=2)
 
-            label = f"{res['class_name']}: {res['confidence']:.2f}"
+            # label = f"{res['class_name']}: {res['confidence']:.2f}"
+            label = f"{res['class_name']}"
             label_pos = (int(points[1][0]), int(points[1][1] - 10))
             cv2.putText(
                 image, label, label_pos, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
             )
         return image
 
-    def calculate_quadrant_stats(self, detections, roi):
+    @staticmethod
+    def crop(image, roi):
+        original_height, original_width = image.shape[:2]
+        roi_x, roi_y, roi_width, roi_height = roi
+        # ROI 边界检查
+        x = max(0, min(roi_x, original_width - 1))
+        y = max(0, min(roi_y, original_height - 1))
+        w = min(roi_width, original_width - roi_x)
+        h = min(roi_height, original_height - roi_y)
+        crop_image = image[y : y + h, x : x + w]
+
+        return crop_image
+
+    @staticmethod
+    def calculate_quadrant_stats(detections, roi):
         """
         计算四象限统计：将图像分为四等分，统计每个象限中各类别的数量
 

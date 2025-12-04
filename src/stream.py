@@ -1,133 +1,102 @@
 import time
 import queue
 import threading
-
 import cv2
 
 
 class ThreadedVideoCapture:
-    """
-    一个健壮的、线程化的视频捕获类。
-
-    该类在一个独立的后台线程中从视频源（如RTSP流）读取帧，
-    并提供了自动重连机制，以应对网络中断等问题。
-    它只在内部队列中保留最新的一帧，以避免画面延迟。
-    """
-
-    def __init__(self, source_url):
+    def __init__(self, source_url, api_preference=cv2.CAP_GSTREAMER):
         self.source_url = source_url
+        self.api_preference = api_preference
         self._cap = None
         self._thread = None
-        self.queue = queue.Queue(maxsize=1)
-        self._is_running = False
-        self._connect()
+        self.queue = queue.Queue(maxsize=1)  # 始终只保留最新帧
+        self._stop_event = (
+            threading.Event()
+        )  # 使用 Event 控制停止比 bool 标志更线程安全
 
-    def _connect(self):
-        """尝试连接到视频源。"""
-        print(f"正在尝试连接到视频流: {self.source_url}")
-
-        pipeline = (
+    def _build_pipeline(self):
+        """构建 GStreamer 字符串，独立出来方便修改"""
+        return (
             f"rtspsrc location={self.source_url} latency=0 ! "
             "decodebin ! videoconvert ! "
-            f"appsink drop=true sync=false"
+            "appsink drop=true sync=false"
         )
 
-        # pipeline = (
-        #     "mfvideosrc ! "
-        #     "videoconvert ! appsink drop=true sync=false"
-        # )
+    def _connect(self):
+        """尝试建立连接"""
+        pipeline = self._build_pipeline()
+        print(f"[{self.source_url}] 连接中...")
 
-        self._cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        if not self._cap.isOpened():
-            print(f"无法打开视频流: {self.source_url}")
+        # 注意：如果不是 GStreamer，这里可能需要降级处理，或者由外部传入 pipeline
+        cap = cv2.VideoCapture(pipeline, self.api_preference)
+
+        if cap.isOpened():
+            print(f"[{self.source_url}] 连接成功")
+            return cap
         else:
-            print(f"视频流连接成功: {self.source_url}")
+            print(f"[{self.source_url}] 连接失败")
+            return None
 
     def start(self):
-        """启动后台读取线程。"""
-        if self._is_running:
-            print(f"线程已经为 {self.source_url} 启动，请勿重复启动。")
-            return
-
-        self._is_running = True
-        self._thread = threading.Thread(
-            target=self._update_loop,
-            daemon=True,
-            name=f"VideoCapture-{self.source_url}",
-        )
-        self._thread.start()
-        print(f"[{self.source_url}] 视频流读取线程已启动。")
+        if not self._thread or not self._thread.is_alive():
+            self._stop_event.clear()
+            self._thread = threading.Thread(target=self._update_loop, daemon=True)
+            self._thread.start()
+            print(f"[{self.source_url}] 线程已启动")
 
     def _update_loop(self):
-        """
-        后台循环，负责读取帧和处理重连。
-        """
         reconnect_delay = 1
-        while self._is_running:
-            if self._cap.isOpened():
-                ret, frame = self._cap.read()
-                if ret:
-                    # 读取成功，重置重连延迟
-                    reconnect_delay = 1
-                    # 使用非阻塞方式放入队列，如果队列满了（说明上一帧还没被消费），就扔掉旧的，放入新的
-                    if self.queue.full():
-                        try:
-                            self.queue.get_nowait()
-                        except queue.Empty:
-                            pass
-                    self.queue.put(frame)
-                else:
-                    # 帧读取失败，可能连接已断开
-                    print(f"从 {self.source_url} 读取帧失败，可能连接已断开。")
-                    self._cap.release()
-                    # 短暂休眠，避免CPU空转
-                    time.sleep(0.01)
-            else:
-                # 连接丢失，尝试重连
-                print(f"流连接丢失，正在尝试重新连接: {self.source_url}")
-                self._cap.release()
 
-                # 带指数退避的重连逻辑
-                self._connect()
-                if not self._cap.isOpened():
-                    print(f"重连失败，将在 {reconnect_delay} 秒后重试...")
+        while not self._stop_event.is_set():
+            # 1. 确保连接存在
+            if self._cap is None or not self._cap.isOpened():
+                self._cap = self._connect()
+                if self._cap is None:
                     time.sleep(reconnect_delay)
-                    reconnect_delay = min(reconnect_delay * 2, 30)  # 指数退避，最长30秒
-                else:
-                    print(f"流重连成功: {self.source_url}")
-                    reconnect_delay = 1  # 重连成功后，重置延迟
+                    reconnect_delay = min(reconnect_delay * 2, 30)
+                    continue
+                reconnect_delay = 1  # 连接成功，重置延迟
+
+            # 2. 读取帧
+            try:
+                ret, frame = self._cap.read()
+                if not ret:
+                    print(f"[{self.source_url}] 帧读取失败，触发重连")
+                    self._release_cap()
+                    continue
+
+                # 3. 更新队列 (非阻塞写入，保证最新)
+                if not self.queue.empty():
+                    try:
+                        self.queue.get_nowait()  # 丢弃旧帧
+                    except queue.Empty:
+                        pass
+                self.queue.put(frame)
+
+            except Exception as e:
+                print(f"[{self.source_url}] 异常: {e}")
+                self._release_cap()
+                time.sleep(1)  # 发生异常时的简单冷却
 
     def read(self, timeout=1.0):
-        """
-        从队列中获取最新的一帧。
-
-        Args:
-            timeout (float): 等待新帧的超时时间（秒）。
-
-        Returns:
-            tuple: (True, frame) 如果成功获取到帧。
-                   (False, None) 如果超时或线程已停止。
-        """
-        if not self._is_running and self.queue.empty():
-            return False, None
         try:
             return True, self.queue.get(timeout=timeout)
         except queue.Empty:
-            print(f"从 {self.source_url} 读取帧超时。")
             return False, None
 
     def stop(self):
-        """停止后台线程并释放资源。"""
-        print(f"正在停止视频读取线程 [{self.source_url}]...")
-        self._is_running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2)  # 等待线程结束
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        self._release_cap()
+        print(f"[{self.source_url}] 已停止")
+
+    def _release_cap(self):
         if self._cap:
             self._cap.release()
         self._cap = None
-        print(f"视频读取线程 [{self.source_url}] 已停止。")
 
-
-if __name__ == "__main__":
-    camera = ThreadedVideoCapture("rtsp://admin:@192.168.0.10:554")
-    camera.start()
+    @property
+    def is_opened(self):
+        return self._cap is not None and self._cap.isOpened()

@@ -3,12 +3,12 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import cv2
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response, status, Query
 
 # camera.py 应该和本文件在同一个目录下
 from stream import ThreadedVideoCapture
-from infer import AsyncYoloInference
-from models import DualStreamInferenceResponse
+from infer import AsyncYoloInference, get_available_devices
+from models import DualStreamInferenceResponse, HealthResponse
 from config import num_streams, stream_url, roi
 
 
@@ -45,9 +45,20 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Async Inference Service", lifespan=lifespan)
 
 
-@app.post("/predict", response_model=DualStreamInferenceResponse)
-async def predict_dual_stream(request: Request):
-    """从双路RTSP流获取最新帧，异步推理，返回推理结果"""
+@app.post(
+    "/predict",
+    response_model=DualStreamInferenceResponse,
+    response_model_exclude_none=True,
+)
+async def predict_dual_stream(
+    request: Request,
+    return_detections: bool = Query(False, description="是否返回详细的目标检测框信息"),
+    return_image: bool = Query(True, description="是否返回绘制了检测框的Base64图片"),
+):
+    """
+    从双路RTSP流获取最新帧，异步推理，返回推理结果。
+    可以通过参数控制是否返回 detections 和 annotated_image。
+    """
 
     # --- 从 app.state 获取共享资源 ---
     yolo_model = request.app.state.yolo_model
@@ -62,71 +73,90 @@ async def predict_dual_stream(request: Request):
     if not ret2 or frame2 is None:
         raise HTTPException(status_code=503, detail="无法从第二路RTSP流读取帧。")
 
+    crop_frame1 = yolo_model.crop(frame1, roi[0])
+    crop_frame2 = yolo_model.crop(frame2, roi[1])
     # 2. 并行执行异步推理（使用ROI裁剪后的帧）
     # 为每个流指定独立的推理队列ID
-    task1 = yolo_model.predict_async(frame1, roi[0], stream_id=0)
-    task2 = yolo_model.predict_async(frame2, roi[1], stream_id=1)
+    task1 = yolo_model.predict_async(crop_frame1, roi[0], stream_id=0)
+    task2 = yolo_model.predict_async(crop_frame2, roi[1], stream_id=1)
 
     (
-        (results1_roi, quadrant_stats_1),
-        (results2_roi, quadrant_stats_2),
+        (results_1, quadrant_stats_1),
+        (results_2, quadrant_stats_2),
     ) = await asyncio.gather(task1, task2)
 
-    # 绘制检测框（在原图上绘制，使用转换后的坐标）
-    image_with_boxes1 = yolo_model.draw_boxes(frame1.copy(), results1_roi)
-    image_with_boxes2 = yolo_model.draw_boxes(frame2.copy(), results2_roi)
+    # 3. 根据参数决定是否处理图像
+    image_base64 = None
+    if return_image:
+        # 绘制检测框（在原图上绘制，使用转换后的坐标）
+        image_with_boxes1 = yolo_model.draw_boxes(crop_frame1, results_1)
+        image_with_boxes2 = yolo_model.draw_boxes(crop_frame2, results_2)
 
-    # 画面拼接（垂直拼接）
-    # 确保两张图宽度一致
-    h1, w1 = image_with_boxes1.shape[:2]
-    h2, w2 = image_with_boxes2.shape[:2]
-    if w1 != w2:
-        target_w = min(w1, w2)
-        if w1 > target_w:
-            new_h1 = int(h1 * target_w / w1)
-            image_with_boxes1 = cv2.resize(image_with_boxes1, (target_w, new_h1))
-        else:
-            new_h2 = int(h2 * target_w / w2)
-            image_with_boxes2 = cv2.resize(image_with_boxes2, (target_w, new_h2))
+        # 画面拼接（垂直拼接）
+        # 确保两张图宽度一致
+        h1, w1 = image_with_boxes1.shape[:2]
+        h2, w2 = image_with_boxes2.shape[:2]
+        if w1 != w2:
+            target_w = min(w1, w2)
+            if w1 > target_w:
+                new_h1 = int(h1 * target_w / w1)
+                image_with_boxes1 = cv2.resize(image_with_boxes1, (target_w, new_h1))
+            else:
+                new_h2 = int(h2 * target_w / w2)
+                image_with_boxes2 = cv2.resize(image_with_boxes2, (target_w, new_h2))
 
-    stitched_image = cv2.vconcat([image_with_boxes1, image_with_boxes2])
+        stitched_image = cv2.vconcat([image_with_boxes1, image_with_boxes2])
 
-    # 画面拼接（水平拼接）
-    # 确保两张图高度一致
-    # h1, w1 = image_with_boxes1.shape[:2]
-    # h2, w2 = image_with_boxes2.shape[:2]
-    # if h1 != h2:
-    #     target_h = min(h1, h2)
-    #     if h1 > target_h:
-    #         new_w1 = int(w1 * target_h / h1)
-    #         image_with_boxes1 = cv2.resize(image_with_boxes1, (new_w1, target_h))
-    #     else:
-    #         new_w2 = int(w2 * target_h / h2)
-    #         image_with_boxes2 = cv2.resize(image_with_boxes2, (new_w2, target_h))
-    #
-    # stitched_image = cv2.hconcat([image_with_boxes1, image_with_boxes2])
+        _, buffer = cv2.imencode(".jpg", stitched_image)
+        image_bytes = buffer.tobytes()
+        # 将图片字节编码为 base64 字符串
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    _, buffer = cv2.imencode(".jpg", stitched_image)
-    image_bytes = buffer.tobytes()
-    # 将图片字节编码为 base64 字符串
-    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+    # 4. 根据参数决定是否返回检测详情
+    # 如果 return_detections 为 False，则将 detections 字段设为 None
+    out_results_1 = results_1 if return_detections else None
+    out_results_2 = results_2 if return_detections else None
 
     return {
-        "stream_1": {"detections": results1_roi, "quadrant_stats": quadrant_stats_1},
-        "stream_2": {"detections": results2_roi, "quadrant_stats": quadrant_stats_2},
+        "stream_1": {"detections": out_results_1, "quadrant_stats": quadrant_stats_1},
+        "stream_2": {"detections": out_results_2, "quadrant_stats": quadrant_stats_2},
         "annotated_image": image_base64,
     }
 
 
-@app.get("/health")
-async def health_check(request: Request):
-    """健康检查端点"""
+@app.get("/health", response_model=HealthResponse)
+async def health_check(request: Request, response: Response):
+    """
+    健康检查
+    """
     rtsp_readers = request.app.state.rtsp_readers
 
-    stream_status = []
-    for idx, reader in enumerate(rtsp_readers):
-        stream_status.append(
-            {f"stream_{idx + 1}": "connected" if reader.isOpened() else "disconnected"}
-        )
+    # 收集所有流的状态
+    connected_count = 0
 
-    return {"status": "healthy", "model": "loaded", "streams": stream_status}
+    for idx, reader in enumerate(rtsp_readers):
+        is_connected = reader.is_opened  # 调用那个 property
+        if is_connected:
+            connected_count += 1
+
+    # 核心业务逻辑判断：
+    if connected_count == len(rtsp_readers):
+        overall_status = "healthy"
+        response.status_code = status.HTTP_200_OK
+    else:
+        # 如果所有流都断了，服务实质上无法工作，返回 503 Service Unavailable
+        overall_status = "unhealthy"
+        # 注意：即使返回 503，JSON body 依然会被返回，方便排查原因
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    return {
+        "status": overall_status,
+        "active_streams": f"{connected_count}/{len(rtsp_readers)}",
+        "available_infer_devices": get_available_devices(),
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -2,17 +2,17 @@
 
 [stream.1]
 url = "rtsp://admin:@192.168.0.10:554"
-roi_x = 501
-roi_y = 30
-roi_width = 895
-roi_height = 920
+roi_x = 482
+roi_y = 18
+roi_width = 955
+roi_height = 940
 
 [stream.2]
 url = "rtsp://admin:@192.168.0.11:554"
-roi_x = 536
-roi_y = 81
-roi_width = 903
-roi_height = 920
+roi_x = 526
+roi_y = 72
+roi_width = 963
+roi_height = 937
 
 [infer]
 confidence_threshold = 0.5
