@@ -8,7 +8,7 @@ services:
       - "8000:8000"
     volumes:
       - ./model:/app/model
-      - ./conf:/app/conf
+      - ./conf/config.toml:/app/conf/config.toml
     restart: unless-stopped
     devices:
       - /dev/dri:/dev/dri

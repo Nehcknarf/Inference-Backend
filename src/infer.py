@@ -14,6 +14,7 @@ from config import (
     num_streams,
     model_dir,
 )
+from utils import ModelCrypto
 
 
 def get_available_devices():
@@ -26,7 +27,7 @@ class AsyncYoloInference:
 
     def __init__(
         self,
-        model_path=model_dir / "best.xml",
+        model_path=model_dir,
         device="AUTO",
         num_streams=num_streams,
         requests_per_stream=2,
@@ -44,14 +45,19 @@ class AsyncYoloInference:
         np.random.seed(42)
         self.colors = np.random.uniform(0, 255, size=(len(class_names), 3))
 
+        crypto_tool = ModelCrypto()
+        xml_enc_path = model_path / "best.xml.enc"
+        bin_enc_path = model_path / "best.bin.enc"
+        model_bytes = crypto_tool.decrypt_to_bytes(xml_enc_path)
+        weights_bytes = crypto_tool.decrypt_to_bytes(bin_enc_path)
         # --- OpenVINO™ 模型初始化 ---
         core = ov.Core()
-        ov_model = core.read_model(model_path)
+        ov_model = core.read_model(model=model_bytes, weights=weights_bytes)
 
-        cache_path = model_dir / "model_cache"
-        cache_path.mkdir(exist_ok=True)
+        # cache_path = model_dir / "model_cache"
+        # cache_path.mkdir(exist_ok=True)
         config_dict = {
-            "CACHE_DIR": str(cache_path),
+            # "CACHE_DIR": str(cache_path),
             hints.performance_mode: hints.PerformanceMode.LATENCY,
         }
 

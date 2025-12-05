@@ -1,5 +1,6 @@
-import os
 import base64
+from pathlib import Path
+from typing import Union
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
@@ -12,7 +13,7 @@ class ModelCrypto:
         初始化加密器。
 
         :param password: 密码 (默认为 b"NuboMed")
-        :param salt: 盐值 (默认为你提供的特定字节串)
+        :param salt: 盐值
         """
         self.password = password
 
@@ -35,85 +36,95 @@ class ModelCrypto:
         key = base64.urlsafe_b64encode(kdf.derive(self.password))
         return Fernet(key)
 
-    def encrypt_file(self, file_path: str, output_path: str = None) -> bool:
+    def encrypt_file(self, file_path: Union[str, Path]) -> bool:
         """
         加密文件。
 
-        :param file_path: 原文件路径
-        :param output_path: 输出路径 (默认在原文件名后加 .enc)
+        :param file_path: 原文件路径 (str 或 Path 对象)
         :return: 是否成功
         """
-        if not os.path.exists(file_path):
-            print(f"[错误] 文件不存在: {file_path}")
+        input_path = Path(file_path)
+
+        if not input_path.exists():
+            print(f"[错误] 文件不存在: {input_path}")
             return False
 
         try:
-            if output_path is None:
-                output_path = file_path + ".enc"
-
-            with open(file_path, "rb") as fin:
-                data = fin.read()
-
+            # 在原文件名（包含后缀）后面直接追加 .enc，例如 best.bin -> best.bin.enc
+            output_path = input_path.with_name(input_path.name + ".enc")
+            data = input_path.read_bytes()
             encrypted_data = self.fernet.encrypt(data)
-
-            with open(output_path, "wb") as fout:
-                fout.write(encrypted_data)
-
-            print(f"[加密成功] {file_path} -> {output_path}")
+            output_path.write_bytes(encrypted_data)
+            print(f"[加密成功] {input_path} -> {output_path}")
             return True
         except Exception as e:
             print(f"[加密错误] {e}")
             return False
 
-    def decrypt_file(self, file_path: str, output_path: str = None) -> bool:
+    def decrypt_file(self, file_path: Union[str, Path]) -> bool:
         """
         解密文件。
 
         :param file_path: 加密文件路径
-        :param output_path: 输出路径 (默认去掉 .enc 后缀，如果没有 .enc 则加 .decrypted)
         :return: 是否成功
         """
-        if not os.path.exists(file_path):
-            print(f"[错误] 文件不存在: {file_path}")
+        input_path = Path(file_path)
+
+        if not input_path.exists():
+            print(f"[错误] 文件不存在: {input_path}")
             return False
 
         try:
-            if output_path is None:
-                if file_path.endswith(".enc"):
-                    output_path = file_path[:-4]
-                else:
-                    output_path = file_path + ".decrypted"
+            # 去掉最后一个后缀 (.enc)
+            output_path = input_path.with_suffix("")
 
-            with open(file_path, "rb") as fin:
-                ciphertext = fin.read()
-
+            ciphertext = input_path.read_bytes()
             decrypted_data = self.fernet.decrypt(ciphertext)
+            output_path.write_bytes(decrypted_data)
 
-            with open(output_path, "wb") as fout:
-                fout.write(decrypted_data)
-
-            print(f"[解密成功] {file_path} -> {output_path}")
+            print(f"[解密成功] {input_path} -> {output_path}")
             return True
 
         except InvalidToken:
-            print(f"[解密失败] 密钥错误或文件已损坏: {file_path}")
+            print(f"[解密失败] 密钥错误或文件已损坏: {input_path}")
             return False
         except Exception as e:
             print(f"[解密错误] {e}")
             return False
 
+    def decrypt_to_bytes(self, file_path: Union[str, Path]) -> bytes:
+        """
+        解密文件并直接返回二进制数据，不写入硬盘。
+
+        :param file_path: 加密文件路径
+        :return: 解密后的 bytes 数据
+        """
+        input_path = Path(file_path)
+
+        if not input_path.exists():
+            raise FileNotFoundError(f"[错误] 文件不存在: {input_path}")
+
+        try:
+            ciphertext = input_path.read_bytes()
+            decrypted_data = self.fernet.decrypt(ciphertext)
+            return decrypted_data
+
+        except InvalidToken:
+            raise ValueError(f"[解密失败] 密钥错误或文件已损坏: {input_path}")
+        except Exception as e:
+            raise RuntimeError(f"[解密错误] {e}")
+
 
 # --- 使用示例 ---
 if __name__ == "__main__":
-    # 1. 实例化 (使用默认的密码和 Salt)
     crypto_tool = ModelCrypto()
 
-    # 2. 批量解密示例
-    files_to_decrypt = ["best.bin.enc", "best.xml.enc"]
+    base_dir = Path("../model")
 
-    print("--- 开始批量解密 ---")
-    for f_path in files_to_decrypt:
-        crypto_tool.decrypt_file(f_path)
+    target_files = [base_dir / "best.bin", base_dir / "best.xml"]
 
-    # 3. 加密示例 (如果你以后需要重新加密)
-    # crypto_tool.encrypt_file("best.bin")
+    for f_path in target_files:
+        if f_path.exists():
+            crypto_tool.encrypt_file(f_path)
+        else:
+            print(f"跳过（未找到）: {f_path}")
